@@ -104,6 +104,14 @@ function limparPlaca(valor: string) {
   return valor.trim().toUpperCase().replace(/[^A-Z0-9]/g, "");
 }
 
+function formatarEntradaPlaca(valor: string) {
+  const limpa = limparPlaca(valor).slice(0, 7);
+
+  if (limpa.length <= 3) return limpa;
+
+  return `${limpa.slice(0, 3)}-${limpa.slice(3)}`;
+}
+
 function formatarPlaca(placa: string) {
   const limpa = limparPlaca(placa);
   return limpa.length === 7 ? `${limpa.slice(0, 3)}-${limpa.slice(3)}` : limpa;
@@ -702,12 +710,13 @@ function RelatoriosPage({ onVoltar }: RelatoriosPageProps) {
               <div className="busca-placa">
                 <input
                   type="text"
-                  value={buscaPlaca}
+                  value={formatarEntradaPlaca(buscaPlaca)}
                   onChange={(evento) =>
-                    setBuscaPlaca(limparPlaca(evento.target.value))
+                    setBuscaPlaca(limparPlaca(evento.target.value).slice(0, 7))
                   }
-                  placeholder="Buscar placa"
-                  maxLength={7}
+                  placeholder="ABC-1D23"
+                  maxLength={8}
+                  autoComplete="off"
                 />
 
                 {buscaPlaca && (

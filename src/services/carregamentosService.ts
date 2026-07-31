@@ -8,6 +8,13 @@ export type TipoCarregamento =
   | "meia-carga"
   | "quantidade";
 
+export type QuantidadeCarregamento = {
+  bazuca?: number;
+  graneleiro?: number;
+  kg?: number;
+  sacos?: number;
+};
+
 export type Carregamento = {
   id: string;
   placa: string;
@@ -22,9 +29,10 @@ export type Carregamento = {
   areaOrigemNome?: string;
   areaDestinoId?: string;
   areaDestinoNome?: string;
-  quantidadeOrigem?: Record<string, number>;
-  quantidadeDestino?: Record<string, number>;
+  quantidadeOrigem?: QuantidadeCarregamento;
+  quantidadeDestino?: QuantidadeCarregamento;
   observacao?: string;
+  pendenteSincronizacao?: boolean;
 };
 
 type OperacaoLocal = {
@@ -55,13 +63,9 @@ function lerRegistrosLocais(): Carregamento[] {
 function salvarRegistrosLocais(
   registros: Carregamento[],
   avisarAplicacao = true,
-) {
+): void {
   const operacao = lerOperacaoLocal();
 
-  /*
-   * Não cria uma operação fictícia quando ainda não existe uma operação ativa.
-   * Apenas atualiza o histórico local quando a operação já existe.
-   */
   if (operacao) {
     localStorage.setItem(
       OPERACAO_KEY,
@@ -72,10 +76,6 @@ function salvarRegistrosLocais(
     );
   }
 
-  /*
-   * Listar dados não pode emitir este evento, pois o App mudava a key da página
-   * e remontava a tela continuamente. O evento fica apenas para edição/exclusão.
-   */
   if (avisarAplicacao) {
     window.dispatchEvent(new Event("crivo:supabase-sincronizado"));
   }
@@ -87,17 +87,25 @@ function mesclarPorId(
 ): Carregamento[] {
   const mapa = new Map<string, Carregamento>();
 
-  remotos.forEach((item) => {
+  locais.forEach((item) => {
     if (item.id) mapa.set(item.id, item);
   });
 
-  locais.forEach((item) => {
-    if (item.id) {
-      mapa.set(item.id, {
-        ...mapa.get(item.id),
-        ...item,
-      });
-    }
+  remotos.forEach((item) => {
+    if (!item.id) return;
+
+    const local = mapa.get(item.id);
+
+    mapa.set(
+      item.id,
+      local?.pendenteSincronizacao
+        ? local
+        : {
+            ...local,
+            ...item,
+            pendenteSincronizacao: false,
+          },
+    );
   });
 
   return Array.from(mapa.values()).sort(
@@ -133,16 +141,17 @@ function paraLocal(item: Record<string, unknown>): Carregamento {
     quantidadeOrigem:
       typeof item.quantidade_origem === "object" &&
       item.quantidade_origem !== null
-        ? (item.quantidade_origem as Record<string, number>)
+        ? (item.quantidade_origem as QuantidadeCarregamento)
         : undefined,
     quantidadeDestino:
       typeof item.quantidade_destino === "object" &&
       item.quantidade_destino !== null
-        ? (item.quantidade_destino as Record<string, number>)
+        ? (item.quantidade_destino as QuantidadeCarregamento)
         : undefined,
     observacao: item.observacao
       ? String(item.observacao)
       : undefined,
+    pendenteSincronizacao: false,
   };
 }
 
@@ -167,12 +176,84 @@ function paraBanco(item: Carregamento) {
   };
 }
 
+async function sincronizarPendentes(
+  registros: Carregamento[],
+): Promise<Carregamento[]> {
+  if (!supabaseConfigurado || !supabase || !navigator.onLine) {
+    return registros;
+  }
+
+  const pendentes = registros.filter(
+    (item) => item.pendenteSincronizacao,
+  );
+
+  if (pendentes.length === 0) return registros;
+
+  const { error } = await supabase
+    .from("carregamentos")
+    .upsert(pendentes.map(paraBanco), { onConflict: "id" });
+
+  if (error) throw error;
+
+  return registros.map((item) =>
+    pendentes.some((pendente) => pendente.id === item.id)
+      ? { ...item, pendenteSincronizacao: false }
+      : item,
+  );
+}
+
+export async function salvarCarregamento(
+  carregamento: Carregamento,
+): Promise<void> {
+  const normalizado: Carregamento = {
+    ...carregamento,
+    placa: carregamento.placa.trim().toUpperCase(),
+    pendenteSincronizacao: true,
+  };
+
+  const atuais = lerRegistrosLocais();
+
+  const atualizados = atuais.some(
+    (item) => item.id === normalizado.id,
+  )
+    ? atuais.map((item) =>
+        item.id === normalizado.id ? normalizado : item,
+      )
+    : [normalizado, ...atuais];
+
+  salvarRegistrosLocais(
+    mesclarPorId(atualizados, []),
+    false,
+  );
+
+  if (!supabaseConfigurado || !supabase || !navigator.onLine) {
+    return;
+  }
+
+  const { error } = await supabase
+    .from("carregamentos")
+    .upsert(paraBanco(normalizado), { onConflict: "id" });
+
+  if (error) throw error;
+
+  const sincronizados = lerRegistrosLocais().map((item) =>
+    item.id === normalizado.id
+      ? { ...item, pendenteSincronizacao: false }
+      : item,
+  );
+
+  salvarRegistrosLocais(sincronizados);
+}
+
 export async function listarCarregamentos(): Promise<Carregamento[]> {
-  const locais = lerRegistrosLocais();
+  let locais = lerRegistrosLocais();
 
   if (!supabaseConfigurado || !supabase || !navigator.onLine) {
     return mesclarPorId(locais, []);
   }
+
+  locais = await sincronizarPendentes(locais);
+  salvarRegistrosLocais(locais, false);
 
   const { data, error } = await supabase
     .from("carregamentos")
@@ -186,10 +267,6 @@ export async function listarCarregamentos(): Promise<Carregamento[]> {
   );
 
   const mesclados = mesclarPorId(locais, remotos);
-
-  /*
-   * Atualiza o local sem disparar evento de remontagem da página.
-   */
   salvarRegistrosLocais(mesclados, false);
 
   return mesclados;
@@ -197,42 +274,16 @@ export async function listarCarregamentos(): Promise<Carregamento[]> {
 
 export async function editarCarregamento(
   carregamento: Carregamento,
-) {
-  const atualizado: Carregamento = {
-    ...carregamento,
-    placa: carregamento.placa.trim().toUpperCase(),
-  };
-
-  if (supabaseConfigurado && supabase && navigator.onLine) {
-    const { error } = await supabase
-      .from("carregamentos")
-      .upsert(paraBanco(atualizado), { onConflict: "id" });
-
-    if (error) throw error;
-  }
-
-  const atuais = lerRegistrosLocais();
-  const atualizados = atuais.some(
-    (item) => item.id === atualizado.id,
-  )
-    ? atuais.map((item) =>
-        item.id === atualizado.id ? atualizado : item,
-      )
-    : [atualizado, ...atuais];
-
-  salvarRegistrosLocais(
-    mesclarPorId(atualizados, []),
-  );
+): Promise<void> {
+  await salvarCarregamento(carregamento);
 }
 
-export async function excluirCarregamentos(ids: string[]) {
+export async function excluirCarregamentos(
+  ids: string[],
+): Promise<void> {
   const idsValidos = [...new Set(ids.filter(Boolean))];
   if (idsValidos.length === 0) return;
 
-  /*
-   * Primeiro exclui do banco. Só depois remove do navegador.
-   * Assim, se o Supabase recusar, o registro local não é perdido.
-   */
   if (supabaseConfigurado && supabase && navigator.onLine) {
     const { error } = await supabase
       .from("carregamentos")
@@ -250,7 +301,7 @@ export async function excluirCarregamentos(ids: string[]) {
   salvarRegistrosLocais(atualizados);
 }
 
-export async function excluirTodosCarregamentos() {
+export async function excluirTodosCarregamentos(): Promise<void> {
   if (supabaseConfigurado && supabase && navigator.onLine) {
     const { error } = await supabase
       .from("carregamentos")
@@ -261,4 +312,4 @@ export async function excluirTodosCarregamentos() {
   }
 
   salvarRegistrosLocais([]);
-  }
+}

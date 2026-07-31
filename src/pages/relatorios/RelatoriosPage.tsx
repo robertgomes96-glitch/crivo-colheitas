@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   ArrowLeft,
   CalendarDays,
@@ -15,6 +15,7 @@ import {
   X,
 } from "lucide-react";
 import "./RelatoriosPage.css";
+import { listarCarregamentos } from "../../services/carregamentosService";
 
 type RelatoriosPageProps = {
   onVoltar: () => void;
@@ -69,6 +70,13 @@ type DadosAreas = {
 
 type PeriodoRapido = "hoje" | "ontem" | "sete-dias" | "tudo";
 
+type FiltrosSalvos = {
+  periodo: PeriodoRapido;
+  areasSelecionadas: string[];
+  buscaPlaca: string;
+  filtrosAbertos: boolean;
+};
+
 type ParticipacaoArea = {
   chave: string;
   registroId: string;
@@ -86,6 +94,7 @@ type ParticipacaoArea = {
 };
 
 const OPERACAO_KEY = "crivo_colheitas_operacao_ativa";
+const FILTROS_KEY = "crivo_colheitas_filtros_relatorio";
 
 function normalizarTexto(valor: unknown) {
   return typeof valor === "string" ? valor.trim() : "";
@@ -244,6 +253,45 @@ function carregarRegistros(): RegistroOperacao[] {
   }
 }
 
+function carregarFiltros(): FiltrosSalvos {
+  const padrao: FiltrosSalvos = {
+    periodo: "hoje",
+    areasSelecionadas: [],
+    buscaPlaca: "",
+    filtrosAbertos: true,
+  };
+
+  const salvo = localStorage.getItem(FILTROS_KEY);
+  if (!salvo) return padrao;
+
+  try {
+    const valor = JSON.parse(salvo) as Partial<FiltrosSalvos>;
+
+    return {
+      periodo:
+        valor.periodo === "hoje" ||
+        valor.periodo === "ontem" ||
+        valor.periodo === "sete-dias" ||
+        valor.periodo === "tudo"
+          ? valor.periodo
+          : padrao.periodo,
+      areasSelecionadas: Array.isArray(valor.areasSelecionadas)
+        ? valor.areasSelecionadas.filter(
+            (item): item is string => typeof item === "string",
+          )
+        : [],
+      buscaPlaca:
+        typeof valor.buscaPlaca === "string" ? valor.buscaPlaca : "",
+      filtrosAbertos:
+        typeof valor.filtrosAbertos === "boolean"
+          ? valor.filtrosAbertos
+          : true,
+    };
+  } catch {
+    return padrao;
+  }
+}
+
 function inicioDoDia(data: Date) {
   const copia = new Date(data);
   copia.setHours(0, 0, 0, 0);
@@ -368,14 +416,58 @@ function criarParticipacoes(registro: RegistroOperacao): ParticipacaoArea[] {
 }
 
 function RelatoriosPage({ onVoltar }: RelatoriosPageProps) {
+  const filtrosIniciais = useMemo(carregarFiltros, []);
   const [dadosAreas, setDadosAreas] = useState<DadosAreas>(carregarDadosAreas);
   const [registros, setRegistros] = useState<RegistroOperacao[]>(carregarRegistros);
-  const [periodo, setPeriodo] = useState<PeriodoRapido>("hoje");
-  const [areasSelecionadas, setAreasSelecionadas] = useState<Set<string>>(
-    new Set(),
+  const [periodo, setPeriodo] = useState<PeriodoRapido>(
+    filtrosIniciais.periodo,
   );
-  const [buscaPlaca, setBuscaPlaca] = useState("");
-  const [filtrosAbertos, setFiltrosAbertos] = useState(true);
+  const [areasSelecionadas, setAreasSelecionadas] = useState<Set<string>>(
+    new Set(filtrosIniciais.areasSelecionadas),
+  );
+  const [buscaPlaca, setBuscaPlaca] = useState(
+    filtrosIniciais.buscaPlaca,
+  );
+  const [filtrosAbertos, setFiltrosAbertos] = useState(
+    filtrosIniciais.filtrosAbertos,
+  );
+
+  useEffect(() => {
+    localStorage.setItem(
+      FILTROS_KEY,
+      JSON.stringify({
+        periodo,
+        areasSelecionadas: Array.from(areasSelecionadas),
+        buscaPlaca,
+        filtrosAbertos,
+      } satisfies FiltrosSalvos),
+    );
+  }, [periodo, areasSelecionadas, buscaPlaca, filtrosAbertos]);
+
+  useEffect(() => {
+    let ativo = true;
+
+    async function carregarDoBanco() {
+      try {
+        const dados = await listarCarregamentos();
+        if (ativo) {
+          setRegistros(dados as RegistroOperacao[]);
+        }
+      } catch (erro) {
+        console.error("Falha ao carregar relatórios:", erro);
+      }
+    }
+
+    void carregarDoBanco();
+
+    const aoVoltarInternet = () => void carregarDoBanco();
+    window.addEventListener("online", aoVoltarInternet);
+
+    return () => {
+      ativo = false;
+      window.removeEventListener("online", aoVoltarInternet);
+    };
+  }, []);
 
   const gruposComAreas = useMemo(() => {
     const normais = dadosAreas.grupos.filter((grupo) =>
@@ -411,9 +503,24 @@ function RelatoriosPage({ onVoltar }: RelatoriosPageProps) {
   }, [participacoes, periodo, areasSelecionadas, buscaPlaca]);
 
   const areasComRegistros = useMemo(() => {
+    const mapa = new Map<string, Area>();
+
+    dadosAreas.areas.forEach((area) => mapa.set(area.id, area));
+
+    participacoesFiltradas.forEach((item) => {
+      if (!mapa.has(item.areaId)) {
+        mapa.set(item.areaId, {
+          id: item.areaId,
+          nome: item.areaNome,
+          grupoId: item.grupoId,
+          ativa: true,
+        });
+      }
+    });
+
     const ids = new Set(participacoesFiltradas.map((item) => item.areaId));
 
-    return dadosAreas.areas
+    return Array.from(mapa.values())
       .filter((area) => ids.has(area.id))
       .sort((a, b) => a.nome.localeCompare(b.nome, "pt-BR"));
   }, [dadosAreas.areas, participacoesFiltradas]);
@@ -434,9 +541,16 @@ function RelatoriosPage({ onVoltar }: RelatoriosPageProps) {
     [participacoesFiltradas],
   );
 
-  function atualizarTudo() {
+  async function atualizarTudo() {
     setDadosAreas(carregarDadosAreas());
-    setRegistros(carregarRegistros());
+
+    try {
+      const dados = await listarCarregamentos();
+      setRegistros(dados as RegistroOperacao[]);
+    } catch (erro) {
+      console.error("Falha ao atualizar relatórios:", erro);
+      setRegistros(carregarRegistros());
+    }
   }
 
   function alternarArea(areaId: string) {

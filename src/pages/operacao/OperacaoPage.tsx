@@ -2,6 +2,11 @@ import { useEffect, useMemo, useState } from "react";
 import { v4 as uuidv4 } from "uuid";
 import { supabase, supabaseConfigurado } from "../../lib/supabase";
 import {
+  listarCarregamentos,
+  salvarCarregamento,
+  type Carregamento,
+} from "../../services/carregamentosService";
+import {
   ArrowLeft,
   CheckCircle2,
   ChevronRight,
@@ -321,6 +326,55 @@ function OperacaoPage({ onVoltar }: OperacaoPageProps) {
   const ultimoRegistro = registrosOrdenados[0] ?? null;
 
   useEffect(() => {
+    let ativo = true;
+
+    async function carregarESincronizar() {
+      try {
+        const registros = await listarCarregamentos();
+        if (!ativo) return;
+
+        setOperacao((atual) => {
+          if (!atual) return atual;
+
+          const mapa = new Map<string, RegistroOperacao>();
+          registros.forEach((item) =>
+            mapa.set(item.id, item as RegistroOperacao),
+          );
+          atual.registros.forEach((item) => {
+            if (item.pendenteSincronizacao || !mapa.has(item.id)) {
+              mapa.set(item.id, item);
+            }
+          });
+
+          const atualizado = {
+            ...atual,
+            registros: Array.from(mapa.values()).sort(
+              (a, b) =>
+                new Date(b.criadoEm).getTime() -
+                new Date(a.criadoEm).getTime(),
+            ),
+          };
+
+          localStorage.setItem(OPERACAO_KEY, JSON.stringify(atualizado));
+          return atualizado;
+        });
+      } catch (erro) {
+        console.error("Falha ao carregar lançamentos:", erro);
+      }
+    }
+
+    void carregarESincronizar();
+
+    const aoVoltarInternet = () => void carregarESincronizar();
+    window.addEventListener("online", aoVoltarInternet);
+
+    return () => {
+      ativo = false;
+      window.removeEventListener("online", aoVoltarInternet);
+    };
+  }, []);
+
+  useEffect(() => {
     if (!operacao || operacao.operadorNome === nomeOperadorAtual) return;
 
     const operacaoAtualizada = {
@@ -371,6 +425,42 @@ function OperacaoPage({ onVoltar }: OperacaoPageProps) {
   function salvarOperacao(nova: OperacaoAtiva) {
     localStorage.setItem(OPERACAO_KEY, JSON.stringify(nova));
     setOperacao(nova);
+  }
+
+  async function sincronizarRegistro(registro: RegistroOperacao) {
+    try {
+      await salvarCarregamento(registro as Carregamento);
+
+      setOperacao((atual) => {
+        if (!atual) return atual;
+
+        const atualizado = {
+          ...atual,
+          registros: atual.registros.map((item) =>
+            item.id === registro.id
+              ? { ...item, pendenteSincronizacao: false }
+              : item,
+          ),
+        };
+
+        localStorage.setItem(OPERACAO_KEY, JSON.stringify(atualizado));
+        return atualizado;
+      });
+    } catch (erro) {
+      console.error("Falha ao sincronizar lançamento:", erro);
+    }
+  }
+
+  function adicionarRegistro(registro: RegistroOperacao) {
+    if (!operacao) return;
+
+    salvarOperacao({
+      ...operacao,
+      registros: [registro, ...operacao.registros],
+      cargaPendente: null,
+    });
+
+    void sincronizarRegistro(registro);
   }
 
   function selecionarGrupo(grupo: Grupo) {
@@ -524,7 +614,7 @@ function OperacaoPage({ onVoltar }: OperacaoPageProps) {
       pendenteSincronizacao: true,
       observacao: `Carga completada com ${textoQuantidade(quantidade)} na área ${p.areaDestinoNome}.`,
     };
-    salvarOperacao({ ...operacao, registros: [registro, ...operacao.registros], cargaPendente: null });
+    adicionarRegistro(registro);
     setModalTroca(null);
     setMensagemSucesso(`${p.placa}: complemento registrado.`);
   }
@@ -545,7 +635,7 @@ function OperacaoPage({ onVoltar }: OperacaoPageProps) {
         ? `Aproximadamente meia carga em ${p.areaOrigemNome} e metade restante em ${p.areaDestinoNome}.`
         : `${textoQuantidade(p.quantidadeOrigem)} em ${p.areaOrigemNome}; restante completado em ${p.areaDestinoNome}.`,
     };
-    salvarOperacao({ ...operacao, registros: [registro, ...operacao.registros], cargaPendente: null });
+    adicionarRegistro(registro);
     setMensagemSucesso(`${p.placa}: carga finalizada.`);
   }
 
@@ -560,7 +650,7 @@ function OperacaoPage({ onVoltar }: OperacaoPageProps) {
       operadorNome: nomeOperadorAtual, placa, criadoEm: new Date().toISOString(), tipo: "saida",
       pendenteSincronizacao: true,
     };
-    salvarOperacao({ ...operacao, registros: [registro, ...operacao.registros] });
+    adicionarRegistro(registro);
     setPlacaDigitada("");
     setMensagemSucesso(`${placa} registrada com sucesso.`);
     window.setTimeout(() => setMensagemSucesso(""), 2500);

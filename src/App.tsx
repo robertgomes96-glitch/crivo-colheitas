@@ -36,38 +36,13 @@ function carregarSessao(): Sessao | null {
   }
 }
 
-function mensagemDoErro(erro: unknown): string {
-  if (erro instanceof Error) {
-    return erro.message;
-  }
-
-  if (
-    typeof erro === "object" &&
-    erro !== null &&
-    "message" in erro
-  ) {
-    const mensagem = (erro as { message?: unknown }).message;
-
-    if (mensagem) {
-      return String(mensagem);
-    }
-  }
-
-  try {
-    return JSON.stringify(erro);
-  } catch {
-    return String(erro);
-  }
-}
-
 function App() {
   const [sessao, setSessao] = useState<Sessao | null>(carregarSessao);
   const [telaAdmin, setTelaAdmin] = useState<AdminTela>("dashboard");
   const [versaoDados, setVersaoDados] = useState(0);
 
   useEffect(() => {
-    const atualizarTelas = () =>
-      setVersaoDados((atual) => atual + 1);
+    const atualizarTelas = () => setVersaoDados((atual) => atual + 1);
 
     window.addEventListener(
       "crivo:supabase-sincronizado",
@@ -75,15 +50,9 @@ function App() {
     );
 
     const parar = iniciarSincronizacaoAutomatica((erro) => {
-      const mensagem = mensagemDoErro(erro);
-
-      console.error(
-        "Falha ao sincronizar com o Supabase:",
+      console.warn(
+        "Sincronização indisponível. Os dados continuam salvos localmente.",
         erro,
-      );
-
-      window.alert(
-        `Erro de sincronização:\n\n${mensagem}`,
       );
     });
 
@@ -104,30 +73,19 @@ function App() {
       cargo: "escritorio",
     };
 
-    localStorage.setItem(
-      SESSAO_KEY,
-      JSON.stringify(novaSessao),
-    );
-
+    localStorage.setItem(SESSAO_KEY, JSON.stringify(novaSessao));
     setSessao(novaSessao);
     setTelaAdmin("dashboard");
   }
 
-  function entrarComoOperador(
-    nome: string,
-    cargo: CargoOperador,
-  ) {
+  function entrarComoOperador(nome: string, cargo: CargoOperador) {
     const novaSessao: Sessao = {
       tipo: "operador",
       nome,
       cargo,
     };
 
-    localStorage.setItem(
-      SESSAO_KEY,
-      JSON.stringify(novaSessao),
-    );
-
+    localStorage.setItem(SESSAO_KEY, JSON.stringify(novaSessao));
     setSessao(novaSessao);
   }
 
@@ -191,9 +149,7 @@ function App() {
       );
     } else if (telaAdmin === "carregamentos") {
       paginaAtual = (
-        <CarregamentosPage
-          onVoltar={voltarDashboard}
-        />
+        <CarregamentosPage onVoltar={voltarDashboard} />
       );
     } else {
       paginaAtual = (

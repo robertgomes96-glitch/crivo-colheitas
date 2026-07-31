@@ -6,6 +6,7 @@ const PLACAS_KEY = "crivo_colheitas_placas";
 const OPERADORES_KEY = "crivo_colheitas_operadores";
 const OPERACAO_KEY = "crivo_colheitas_operacao_ativa";
 const HYDRATED_KEY = "crivo_colheitas_supabase_hidratado";
+const INTERVALO_SINCRONIZACAO_MS = 60_000;
 
 type JsonRecord = Record<string, unknown>;
 
@@ -23,6 +24,10 @@ type DetalhesStatusSincronizacao = {
   status: StatusSincronizacao;
   mensagem?: string;
   data?: string;
+};
+
+type OpcoesSincronizacao = {
+  silenciosa?: boolean;
 };
 
 function emitirStatusSincronizacao(
@@ -395,7 +400,9 @@ async function sincronizarCarregamentos() {
   }
 }
 
-export async function sincronizarComSupabase() {
+export async function sincronizarComSupabase(
+  opcoes: OpcoesSincronizacao = {},
+) {
   if (
     !supabaseConfigurado ||
     !supabase
@@ -407,11 +414,24 @@ export async function sincronizarComSupabase() {
     };
   }
 
-  emitirStatusSincronizacao({
-    status: "sincronizando",
-    mensagem:
-      "Enviando e recebendo dados...",
-  });
+  if (!navigator.onLine) {
+    return {
+      conectado: false,
+      mensagem:
+        "Sem internet. Dados mantidos no aparelho.",
+    };
+  }
+
+  const silenciosa =
+    opcoes.silenciosa === true;
+
+  if (!silenciosa) {
+    emitirStatusSincronizacao({
+      status: "sincronizando",
+      mensagem:
+        "Enviando e recebendo dados...",
+    });
+  }
 
   const antes = [
     GRUPOS_KEY,
@@ -522,9 +542,13 @@ export function iniciarSincronizacaoAutomatica(
   onErro?: (erro: unknown) => void,
 ) {
   let executando = false;
+  let encerrado = false;
 
-  const executar = async () => {
+  const executar = async (
+    silenciosa = false,
+  ) => {
     if (
+      encerrado ||
       executando ||
       !navigator.onLine ||
       !supabaseConfigurado
@@ -535,7 +559,9 @@ export function iniciarSincronizacaoAutomatica(
     executando = true;
 
     try {
-      await sincronizarComSupabase();
+      await sincronizarComSupabase({
+        silenciosa,
+      });
     } catch (erro) {
       onErro?.(erro);
     } finally {
@@ -543,25 +569,32 @@ export function iniciarSincronizacaoAutomatica(
     }
   };
 
-  void executar();
+  void executar(false);
 
   const intervalo =
     window.setInterval(
-      executar,
-      5000,
+      () => {
+        void executar(true);
+      },
+      INTERVALO_SINCRONIZACAO_MS,
     );
+
+  const aoFicarOnline = () => {
+    void executar(false);
+  };
 
   window.addEventListener(
     "online",
-    executar,
+    aoFicarOnline,
   );
 
   return () => {
+    encerrado = true;
     window.clearInterval(intervalo);
 
     window.removeEventListener(
       "online",
-      executar,
+      aoFicarOnline,
     );
   };
 }

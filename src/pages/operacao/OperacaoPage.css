@@ -967,3 +967,132 @@
   .destravar-aparelho-button { width: 100%; }
   .ocorrencia-opcoes-grid { grid-template-columns: 1fr; }
 }
+
+
+/* Cargas pausadas / continuar mais tarde */
+.carga-pendente-acoes {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.carga-pendente-card .pausar-carga-button {
+  border: 1px solid #d79a2b;
+  background: white;
+  color: #9a5b00;
+}
+
+.cargas-aguardando-card {
+  margin-top: 18px;
+  padding: 21px;
+  border: 1px solid #d8d5ef;
+  border-radius: 20px;
+  background: #f8f7ff;
+  box-shadow: 0 10px 26px rgba(65, 55, 120, 0.06);
+}
+
+.cargas-aguardando-cabecalho h3,
+.cargas-aguardando-cabecalho p {
+  margin: 0;
+}
+
+.cargas-aguardando-cabecalho h3 {
+  color: #413a72;
+  font-size: 22px;
+}
+
+.cargas-aguardando-cabecalho span {
+  display: block;
+  margin-top: 5px;
+  color: #706b86;
+  font-size: 14px;
+}
+
+.cargas-aguardando-lista {
+  margin-top: 15px;
+  display: grid;
+  gap: 10px;
+}
+
+.cargas-aguardando-lista article {
+  padding: 14px 15px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  border: 1px solid #ddd9f0;
+  border-radius: 15px;
+  background: white;
+}
+
+.cargas-aguardando-lista strong,
+.cargas-aguardando-lista span,
+.cargas-aguardando-lista small {
+  display: block;
+}
+
+.cargas-aguardando-lista strong {
+  color: #332d61;
+  font-size: 19px;
+  letter-spacing: 0.04em;
+}
+
+.cargas-aguardando-lista span {
+  margin-top: 4px;
+  color: #625d79;
+}
+
+.cargas-aguardando-lista small {
+  margin-top: 4px;
+  color: #8a859b;
+}
+
+.cargas-aguardando-lista button,
+.modal-pausar-carga {
+  min-height: 44px;
+  padding: 0 15px;
+  border: 1px solid #766db0;
+  border-radius: 12px;
+  background: #edeaff;
+  color: #423a78;
+  font: inherit;
+  font-weight: 800;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  white-space: nowrap;
+}
+
+.modal-pausar-carga {
+  width: 100%;
+  margin-top: 10px;
+}
+
+.cargas-aguardando-vazio {
+  margin: 16px 0 0;
+  color: #716c83;
+}
+
+@media (max-width: 760px) {
+  .carga-pendente-acoes {
+    width: 100%;
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .carga-pendente-acoes button {
+    width: 100%;
+    justify-content: center;
+  }
+
+  .cargas-aguardando-lista article {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .cargas-aguardando-lista button {
+    width: 100%;
+  }
+}

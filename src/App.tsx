@@ -10,6 +10,7 @@ import CarregamentosPage from "./pages/carregamentos/CarregamentosPage";
 import StatusSincronizacao from "./components/StatusSincronizacao/StatusSincronizacao";
 import { iniciarSincronizacaoAutomatica } from "./services/supabaseSync";
 import { obterDeviceId } from "./services/deviceService";
+import { marcarEsteAparelhoInativo } from "./services/statusOperadoresService";
 
 type CargoOperador =
   | "operador"
@@ -97,6 +98,12 @@ function App() {
   }
 
   function sair() {
+    if (sessao?.tipo === "operador") {
+      void marcarEsteAparelhoInativo().catch((erro) =>
+        console.warn("Não foi possível marcar o operador como inativo.", erro),
+      );
+    }
+
     localStorage.removeItem(SESSAO_KEY);
     setSessao(null);
     setTelaAdmin("dashboard");

@@ -359,3 +359,44 @@ button:disabled {
     grid-column: auto;
   }
 }
+
+/* Inclusão manual de carregamento */
+.cargas-topo-acoes {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.cargas-adicionar {
+  min-height: 46px;
+  padding: 0 16px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  border: 0;
+  border-radius: 13px;
+  color: white;
+  background: #176335;
+  font: inherit;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.cargas-adicionar:hover {
+  background: #105429;
+}
+
+@media (max-width: 720px) {
+  .cargas-topo-acoes {
+    width: 100%;
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .cargas-adicionar {
+    width: 100%;
+  }
+}

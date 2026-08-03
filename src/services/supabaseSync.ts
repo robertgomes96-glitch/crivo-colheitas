@@ -3,6 +3,8 @@ import {
   sincronizarFilaCarregamentos,
 } from "./carregamentosService";
 import { sincronizarFilaOcorrencias } from "./ocorrenciasService";
+import { atualizarStatusDesteAparelho } from "./statusOperadoresService";
+import { sincronizarFilaCargasAguardando } from "./cargasAguardandoService";
 
 const AREAS_KEY = "crivo_colheitas_areas";
 const GRUPOS_KEY = "crivo_colheitas_grupos";
@@ -273,9 +275,14 @@ export async function sincronizarComSupabase(
      */
     await sincronizarFilaCarregamentos();
     await sincronizarFilaOcorrencias();
+    await sincronizarFilaCargasAguardando();
 
     const dataSincronizacao = new Date().toISOString();
     localStorage.setItem(HYDRATED_KEY, dataSincronizacao);
+
+    await atualizarStatusDesteAparelho({
+      ultimaSincronizacao: dataSincronizacao,
+    });
 
     const depois = chavesCompartilhadas
       .map((chave) => localStorage.getItem(chave) ?? "")

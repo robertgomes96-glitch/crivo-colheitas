@@ -12,6 +12,15 @@ import {
   type TipoOcorrencia,
 } from "../../services/ocorrenciasService";
 import {
+  atualizarStatusDesteAparelho,
+} from "../../services/statusOperadoresService";
+import {
+  concluirCargaAguardando,
+  listarCargasAguardando,
+  salvarCargaAguardando,
+  type CargaAguardando,
+} from "../../services/cargasAguardandoService";
+import {
   AlertTriangle,
   ArrowLeft,
   CheckCircle2,
@@ -19,6 +28,8 @@ import {
   Clock3,
   FolderOpen,
   MapPinned,
+  PauseCircle,
+  PlayCircle,
   RefreshCcw,
   RotateCcw,
   Truck,
@@ -82,6 +93,7 @@ type CargaPendente = {
   areaDestinoId: string;
   areaDestinoNome: string;
   quantidadeOrigem?: QuantidadeCarga;
+  iniciadaEm?: string;
 };
 
 type OperacaoAtiva = {
@@ -253,7 +265,15 @@ function carregarOperacao(): OperacaoAtiva | null {
       operadorNome: valor.operadorNome ?? "Escritório",
       iniciadaEm: valor.iniciadaEm ?? new Date().toISOString(),
       registros: Array.isArray(valor.registros) ? valor.registros : [],
-      cargaPendente: valor.cargaPendente ?? null,
+      cargaPendente: valor.cargaPendente
+        ? {
+            ...valor.cargaPendente,
+            iniciadaEm:
+              valor.cargaPendente.iniciadaEm ??
+              valor.iniciadaEm ??
+              new Date().toISOString(),
+          }
+        : null,
     };
   } catch {
     localStorage.removeItem(OPERACAO_KEY);
@@ -331,6 +351,8 @@ function OperacaoPage({ onVoltar }: OperacaoPageProps) {
   const [tipoOcorrencia, setTipoOcorrencia] = useState<TipoOcorrencia | null>(null);
   const [descricaoOcorrencia, setDescricaoOcorrencia] = useState("");
   const [enviandoOcorrencia, setEnviandoOcorrencia] = useState(false);
+  const [cargasAguardando, setCargasAguardando] = useState<CargaAguardando[]>([]);
+  const [carregandoAguardando, setCarregandoAguardando] = useState(false);
 
   const gruposComAreas = useMemo(() => {
     const normais = dadosAreas.grupos.filter((g) => dadosAreas.areas.some((a) => a.grupoId === g.id));
@@ -344,6 +366,59 @@ function OperacaoPage({ onVoltar }: OperacaoPageProps) {
   }, [dadosAreas.areas, grupoSelecionadoId]);
 
   const nomeOperadorAtual = sessao?.nome ?? "Escritório";
+
+
+  async function carregarCargasAguardando() {
+    setCarregandoAguardando(true);
+
+    try {
+      setCargasAguardando(
+        await listarCargasAguardando(nomeOperadorAtual),
+      );
+    } catch (erro) {
+      console.error("Falha ao carregar cargas aguardando:", erro);
+    } finally {
+      setCarregandoAguardando(false);
+    }
+  }
+
+  useEffect(() => {
+    void carregarCargasAguardando();
+
+    const aoVoltarInternet = () => void carregarCargasAguardando();
+    window.addEventListener("online", aoVoltarInternet);
+
+    return () => {
+      window.removeEventListener("online", aoVoltarInternet);
+    };
+  }, [nomeOperadorAtual]);
+
+  useEffect(() => {
+    if (sessao?.tipo !== "operador") return;
+
+    const atualizar = () => {
+      void atualizarStatusDesteAparelho().catch((erro) =>
+        console.warn("Não foi possível atualizar o status do operador.", erro),
+      );
+    };
+
+    atualizar();
+
+    const intervalo = window.setInterval(atualizar, 30_000);
+    window.addEventListener("online", atualizar);
+
+    return () => {
+      window.clearInterval(intervalo);
+      window.removeEventListener("online", atualizar);
+    };
+  }, [
+    sessao?.tipo,
+    nomeOperadorAtual,
+    operacao?.areaId,
+    operacao?.grupoId,
+    operacao?.cargaPendente,
+    cargasAguardando.length,
+  ]);
 
   const registrosOrdenados = useMemo(() => {
     return [...(operacao?.registros ?? [])].sort(
@@ -461,16 +536,30 @@ function OperacaoPage({ onVoltar }: OperacaoPageProps) {
         ...item,
         apelido: apelidos.get(item.placa) ?? "",
       }));
-  }, [operacao?.registros]);
+  }, [nomeOperadorAtual, operacao?.registros]);
 
   function salvarOperacao(nova: OperacaoAtiva) {
     localStorage.setItem(OPERACAO_KEY, JSON.stringify(nova));
     setOperacao(nova);
+
+    if (sessao?.tipo === "operador") {
+      void atualizarStatusDesteAparelho({
+        ultimaAtividade: new Date().toISOString(),
+      }).catch((erro) =>
+        console.warn("Não foi possível atualizar o status.", erro),
+      );
+    }
   }
 
   async function sincronizarRegistro(registro: RegistroOperacao) {
     try {
       await salvarCarregamento(registro as Carregamento);
+
+      if (sessao?.tipo === "operador") {
+        await atualizarStatusDesteAparelho({
+          ultimaAtividade: registro.criadoEm,
+        });
+      }
 
       setOperacao((atual) => {
         if (!atual) return atual;
@@ -527,6 +616,7 @@ function OperacaoPage({ onVoltar }: OperacaoPageProps) {
         areaDestinoId: area.id,
         areaDestinoNome: area.nome,
         quantidadeOrigem: trocaEmAndamento.quantidadeOrigem,
+        iniciadaEm: new Date().toISOString(),
       };
       salvarOperacao({ ...operacao, grupoId, grupoNome, areaId: area.id, areaNome: area.nome, iniciadaEm: new Date().toISOString(), cargaPendente: pendente });
       setGrupoSelecionadoId(grupoId);
@@ -656,8 +746,103 @@ function OperacaoPage({ onVoltar }: OperacaoPageProps) {
       observacao: `Carga completada com ${textoQuantidade(quantidade)} na área ${p.areaDestinoNome}.`,
     };
     adicionarRegistro(registro);
+    void concluirCargaAguardando(p.id);
+    setCargasAguardando((atuais) =>
+      atuais.filter((item) => item.id !== p.id),
+    );
     setModalTroca(null);
     setMensagemSucesso(`${p.placa}: complemento registrado.`);
+  }
+
+  async function pausarCargaAtual() {
+    if (!operacao?.cargaPendente) return;
+
+    const p = operacao.cargaPendente;
+
+    try {
+      const aguardando = await salvarCargaAguardando({
+        id: p.id,
+        operadorNome: nomeOperadorAtual,
+        placa: p.placa,
+        tipo: p.tipo,
+        grupoOrigemId: p.grupoOrigemId,
+        grupoOrigemNome: p.grupoOrigemNome,
+        areaOrigemId: p.areaOrigemId,
+        areaOrigemNome: p.areaOrigemNome,
+        grupoDestinoId: p.grupoDestinoId,
+        grupoDestinoNome: p.grupoDestinoNome,
+        areaDestinoId: p.areaDestinoId,
+        areaDestinoNome: p.areaDestinoNome,
+        quantidadeOrigem: p.quantidadeOrigem,
+        iniciadaEm: p.iniciadaEm ?? new Date().toISOString(),
+        pausadaEm: new Date().toISOString(),
+        observacao: "Carga guardada para continuar mais tarde.",
+      });
+
+      salvarOperacao({
+        ...operacao,
+        cargaPendente: null,
+      });
+
+      setCargasAguardando((atuais) => [
+        aguardando,
+        ...atuais.filter((item) => item.id !== aguardando.id),
+      ]);
+      setModalTroca(null);
+      setQuantidades(criarQuantidadeVazia());
+      setMensagemSucesso(
+        `${p.placa}: carga guardada para continuar mais tarde.`,
+      );
+      window.setTimeout(() => setMensagemSucesso(""), 3000);
+    } catch (erro) {
+      console.error("Falha ao pausar carga:", erro);
+      window.alert("Não foi possível guardar esta carga.");
+    }
+  }
+
+  function retomarCarga(carga: CargaAguardando) {
+    if (!operacao) return;
+
+    if (operacao.cargaPendente) {
+      window.alert(
+        "Finalize ou guarde a carga atual antes de retomar outra.",
+      );
+      return;
+    }
+
+    const pendente: CargaPendente = {
+      id: carga.id,
+      tipo: carga.tipo,
+      placa: carga.placa,
+      grupoOrigemId: carga.grupoOrigemId,
+      grupoOrigemNome: carga.grupoOrigemNome,
+      areaOrigemId: carga.areaOrigemId,
+      areaOrigemNome: carga.areaOrigemNome,
+      grupoDestinoId: carga.grupoDestinoId,
+      grupoDestinoNome: carga.grupoDestinoNome,
+      areaDestinoId: carga.areaDestinoId,
+      areaDestinoNome: carga.areaDestinoNome,
+      quantidadeOrigem: carga.quantidadeOrigem,
+      iniciadaEm: carga.iniciadaEm,
+    };
+
+    salvarOperacao({
+      ...operacao,
+      grupoId: carga.grupoDestinoId,
+      grupoNome: carga.grupoDestinoNome,
+      areaId: carga.areaDestinoId,
+      areaNome: carga.areaDestinoNome,
+      iniciadaEm: new Date().toISOString(),
+      cargaPendente: pendente,
+    });
+
+    setGrupoSelecionadoId(carga.grupoDestinoId);
+    setEtapa("trabalho");
+    setQuantidades(criarQuantidadeVazia());
+
+    if (carga.tipo === "faltou-pouco") {
+      setModalTroca("completar-faltou-pouco");
+    }
   }
 
   function finalizarCargaPendente() {
@@ -677,6 +862,10 @@ function OperacaoPage({ onVoltar }: OperacaoPageProps) {
         : `${textoQuantidade(p.quantidadeOrigem)} em ${p.areaOrigemNome}; restante completado em ${p.areaDestinoNome}.`,
     };
     adicionarRegistro(registro);
+    void concluirCargaAguardando(p.id);
+    setCargasAguardando((atuais) =>
+      atuais.filter((item) => item.id !== p.id),
+    );
     setMensagemSucesso(`${p.placa}: carga finalizada.`);
   }
 
@@ -1014,12 +1203,78 @@ function OperacaoPage({ onVoltar }: OperacaoPageProps) {
               </div>
             </section>
 
-            {operacao.cargaPendente && operacao.cargaPendente.tipo !== "faltou-pouco" && (
+            {operacao.cargaPendente && (
               <section className="carga-pendente-card">
                 <div><p className="operacao-etiqueta">Carga em andamento</p><h3>{operacao.cargaPendente.placa}</h3><span>{operacao.cargaPendente.areaOrigemNome} → {operacao.cargaPendente.areaDestinoNome}</span>
                   {operacao.cargaPendente.tipo === "meia-carga" ? <p>Aproximadamente meia carga veio da área anterior.</p> : <p>Registrado na área anterior: <strong>{textoQuantidade(operacao.cargaPendente.quantidadeOrigem)}</strong></p>}
                 </div>
-                <button type="button" onClick={finalizarCargaPendente}><CheckCircle2 size={22} />{operacao.cargaPendente.tipo === "meia-carga" ? "Carga completa" : "Finalizar carga"}</button>
+                <div className="carga-pendente-acoes">
+                  <button type="button" className="pausar-carga-button" onClick={() => void pausarCargaAtual()}><PauseCircle size={21} />Continuar mais tarde</button>
+                  {operacao.cargaPendente.tipo === "faltou-pouco" ? (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setQuantidades(criarQuantidadeVazia());
+                        setModalTroca("completar-faltou-pouco");
+                      }}
+                    >
+                      <CheckCircle2 size={22} />
+                      Informar complemento
+                    </button>
+                  ) : (
+                    <button type="button" onClick={finalizarCargaPendente}>
+                      <CheckCircle2 size={22} />
+                      {operacao.cargaPendente.tipo === "meia-carga"
+                        ? "Carga completa"
+                        : "Finalizar carga"}
+                    </button>
+                  )}
+                </div>
+              </section>
+            )}
+
+            {(cargasAguardando.length > 0 || carregandoAguardando) && (
+              <section className="cargas-aguardando-card">
+                <div className="cargas-aguardando-cabecalho">
+                  <div>
+                    <p className="operacao-etiqueta">Continuar depois</p>
+                    <h3>
+                      Cargas aguardando ({cargasAguardando.length})
+                    </h3>
+                    <span>
+                      Você pode registrar outros caminhões e voltar a qualquer carga.
+                    </span>
+                  </div>
+                </div>
+
+                {carregandoAguardando && cargasAguardando.length === 0 ? (
+                  <p className="cargas-aguardando-vazio">Carregando...</p>
+                ) : (
+                  <div className="cargas-aguardando-lista">
+                    {cargasAguardando.map((carga) => (
+                      <article key={carga.id}>
+                        <div>
+                          <strong>{carga.placa}</strong>
+                          <span>
+                            {carga.areaOrigemNome} → {carga.areaDestinoNome}
+                          </span>
+                          <small>
+                            Guardada às {formatarHorario(carga.pausadaEm ?? carga.iniciadaEm)}
+                          </small>
+                        </div>
+
+                        <button
+                          type="button"
+                          onClick={() => retomarCarga(carga)}
+                          disabled={Boolean(operacao.cargaPendente)}
+                        >
+                          <PlayCircle size={20} />
+                          Retomar
+                        </button>
+                      </article>
+                    ))}
+                  </div>
+                )}
               </section>
             )}
 
@@ -1109,7 +1364,7 @@ function OperacaoPage({ onVoltar }: OperacaoPageProps) {
               <button type="button" className="modal-confirmar" onClick={confirmarPlacaIncompleta}>Continuar</button></>}
 
             {modalTroca === "quantidade-origem" && <QuantidadeEditor titulo={`Quanto ficou em ${operacao?.areaNome}?`} botao="Salvar e escolher próxima área" onConfirmar={confirmarQuantidadeOrigem} />}
-            {modalTroca === "completar-faltou-pouco" && <><p className="operacao-etiqueta">Completar carga</p><h2>{operacao?.cargaPendente?.placa}</h2><p>Quanto foi colocado em <strong>{operacao?.areaNome}</strong>?</p><QuantidadeEditor titulo="Selecione a quantidade" botao="Confirmar carga completa" onConfirmar={registrarComplementoFaltouPouco} /></>}
+            {modalTroca === "completar-faltou-pouco" && <><p className="operacao-etiqueta">Completar carga</p><h2>{operacao?.cargaPendente?.placa}</h2><p>Quanto foi colocado em <strong>{operacao?.areaNome}</strong>?</p><QuantidadeEditor titulo="Selecione a quantidade" botao="Confirmar carga completa" onConfirmar={registrarComplementoFaltouPouco} /><button type="button" className="modal-pausar-carga" onClick={() => void pausarCargaAtual()}><PauseCircle size={20} />Continuar mais tarde</button></>}
 
             {modalTroca === "ocorrencia" && (
               <>

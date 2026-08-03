@@ -1,8 +1,10 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { v4 as uuidv4 } from "uuid";
 import {
   ArrowLeft,
   Check,
   Edit3,
+  Plus,
   RefreshCcw,
   Search,
   Trash2,
@@ -14,6 +16,7 @@ import {
   excluirCarregamentos,
   excluirTodosCarregamentos,
   listarCarregamentos,
+  salvarCarregamento,
   type Carregamento,
   type TipoCarregamento,
 } from "../../services/carregamentosService";
@@ -22,6 +25,31 @@ import "./CarregamentosPage.css";
 type Props = {
   onVoltar: () => void;
 };
+
+const AGORA_LOCAL = () => {
+  const data = new Date();
+  const deslocamento = data.getTimezoneOffset() * 60000;
+  return new Date(data.getTime() - deslocamento).toISOString().slice(0, 16);
+};
+
+function novoCarregamentoManual(): Carregamento {
+  return {
+    id: uuidv4(),
+    placa: "",
+    grupoId: "manual",
+    grupoNome: "Sem grupo",
+    areaId: "manual",
+    areaNome: "",
+    operadorNome: "Escritório",
+    tipo: "saida",
+    criadoEm: AGORA_LOCAL(),
+    observacao: "Lançamento incluído manualmente pelo escritório.",
+  };
+}
+
+function limparPlaca(valor: string) {
+  return valor.toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 7);
+}
 
 function formatarData(valor: string) {
   const data = new Date(valor);
@@ -39,7 +67,7 @@ function formatarData(valor: string) {
 
 function paraInputData(valor: string) {
   const data = new Date(valor);
-  if (Number.isNaN(data.getTime())) return "";
+  if (Number.isNaN(data.getTime())) return valor;
   const deslocamento = data.getTimezoneOffset() * 60000;
   return new Date(data.getTime() - deslocamento).toISOString().slice(0, 16);
 }
@@ -60,6 +88,7 @@ export default function CarregamentosPage({ onVoltar }: Props) {
   const [busca, setBusca] = useState("");
   const [selecionados, setSelecionados] = useState<Set<string>>(new Set());
   const [editando, setEditando] = useState<Carregamento | null>(null);
+  const [criando, setCriando] = useState<Carregamento | null>(null);
   const [carregando, setCarregando] = useState(true);
   const [salvando, setSalvando] = useState(false);
   const [erro, setErro] = useState("");
@@ -107,10 +136,8 @@ export default function CarregamentosPage({ onVoltar }: Props) {
   function alternarSelecao(id: string) {
     setSelecionados((atuais) => {
       const novos = new Set(atuais);
-
       if (novos.has(id)) novos.delete(id);
       else novos.add(id);
-
       return novos;
     });
   }
@@ -119,9 +146,7 @@ export default function CarregamentosPage({ onVoltar }: Props) {
     setSelecionados((atuais) => {
       const todosVisiveisSelecionados =
         filtrados.length > 0 && filtrados.every((item) => atuais.has(item.id));
-
       if (todosVisiveisSelecionados) return new Set();
-
       return new Set(filtrados.map((item) => item.id));
     });
   }
@@ -141,9 +166,7 @@ export default function CarregamentosPage({ onVoltar }: Props) {
 
     try {
       await excluirCarregamentos(ids);
-      setRegistros((atuais) =>
-        atuais.filter((item) => !ids.includes(item.id)),
-      );
+      setRegistros((atuais) => atuais.filter((item) => !ids.includes(item.id)));
       setSelecionados(new Set());
       setMensagem("Carregamento(s) excluído(s) com sucesso.");
       window.setTimeout(() => setMensagem(""), 2500);
@@ -155,40 +178,97 @@ export default function CarregamentosPage({ onVoltar }: Props) {
     }
   }
 
-  async function salvarEdicao() {
-    if (!editando) return;
-
-    if (!editando.placa.trim() || !editando.areaNome.trim()) {
-      setErro("Informe pelo menos a placa e a área.");
-      return;
+  function validar(carregamento: Carregamento) {
+    if (limparPlaca(carregamento.placa).length !== 7) {
+      setErro("Informe uma placa válida com 7 caracteres.");
+      return false;
     }
+
+    if (!carregamento.areaNome.trim()) {
+      setErro("Informe a área do carregamento.");
+      return false;
+    }
+
+    if (!carregamento.operadorNome.trim()) {
+      setErro("Informe o operador.");
+      return false;
+    }
+
+    if (Number.isNaN(new Date(carregamento.criadoEm).getTime())) {
+      setErro("Informe uma data e horário válidos.");
+      return false;
+    }
+
+    return true;
+  }
+
+  async function salvarEdicao() {
+    if (!editando || !validar(editando)) return;
 
     setSalvando(true);
     setErro("");
 
-    try {
-      await editarCarregamento({
-        ...editando,
-        placa: editando.placa.trim().toUpperCase(),
-        criadoEm: new Date(editando.criadoEm).toISOString(),
-      });
+    const atualizado: Carregamento = {
+      ...editando,
+      placa: limparPlaca(editando.placa),
+      criadoEm: new Date(editando.criadoEm).toISOString(),
+    };
 
+    try {
+      await editarCarregamento(atualizado);
       setRegistros((atuais) =>
         atuais
-          .map((item) => (item.id === editando.id ? editando : item))
+          .map((item) => (item.id === atualizado.id ? atualizado : item))
           .sort(
             (a, b) =>
-              new Date(b.criadoEm).getTime() -
-              new Date(a.criadoEm).getTime(),
+              new Date(b.criadoEm).getTime() - new Date(a.criadoEm).getTime(),
           ),
       );
-
       setEditando(null);
       setMensagem("Carregamento atualizado.");
       window.setTimeout(() => setMensagem(""), 2500);
     } catch (falha) {
       console.error(falha);
       setErro("Não foi possível salvar a alteração.");
+    } finally {
+      setSalvando(false);
+    }
+  }
+
+  async function salvarManual() {
+    if (!criando || !validar(criando)) return;
+
+    setSalvando(true);
+    setErro("");
+
+    const novo: Carregamento = {
+      ...criando,
+      placa: limparPlaca(criando.placa),
+      grupoNome: criando.grupoNome.trim() || "Sem grupo",
+      areaNome: criando.areaNome.trim(),
+      operadorNome: criando.operadorNome.trim(),
+      criadoEm: new Date(criando.criadoEm).toISOString(),
+      observacao:
+        criando.observacao?.trim() ||
+        "Lançamento incluído manualmente pelo escritório.",
+    };
+
+    try {
+      await salvarCarregamento(novo);
+      setRegistros((atuais) =>
+        [novo, ...atuais].sort(
+          (a, b) =>
+            new Date(b.criadoEm).getTime() - new Date(a.criadoEm).getTime(),
+        ),
+      );
+      setCriando(null);
+      setMensagem("Carregamento manual adicionado.");
+      window.setTimeout(() => setMensagem(""), 2500);
+    } catch (falha) {
+      console.error(falha);
+      setErro(
+        "O carregamento ficou salvo no computador e será sincronizado quando possível.",
+      );
     } finally {
       setSalvando(false);
     }
@@ -217,6 +297,9 @@ export default function CarregamentosPage({ onVoltar }: Props) {
     }
   }
 
+  const formulario = criando ?? editando;
+  const modoCriacao = Boolean(criando);
+
   return (
     <main className="cargas-page">
       <header className="cargas-header">
@@ -224,7 +307,6 @@ export default function CarregamentosPage({ onVoltar }: Props) {
           <button type="button" onClick={onVoltar} className="cargas-voltar">
             <ArrowLeft size={22} />
           </button>
-
           <div>
             <p>Crivo Colheitas</p>
             <h1>Gerenciar carregamentos</h1>
@@ -249,15 +331,27 @@ export default function CarregamentosPage({ onVoltar }: Props) {
             <p>{registros.length} registro(s) no histórico.</p>
           </div>
 
-          <button
-            type="button"
-            className="cargas-apagar-tudo"
-            onClick={() => void apagarTudo()}
-            disabled={salvando || registros.length === 0}
-          >
-            <Trash2 size={18} />
-            Apagar tudo
-          </button>
+          <div className="cargas-topo-acoes">
+            <button
+              type="button"
+              className="cargas-adicionar"
+              onClick={() => setCriando(novoCarregamentoManual())}
+              disabled={salvando}
+            >
+              <Plus size={18} />
+              Adicionar carregamento
+            </button>
+
+            <button
+              type="button"
+              className="cargas-apagar-tudo"
+              onClick={() => void apagarTudo()}
+              disabled={salvando || registros.length === 0}
+            >
+              <Trash2 size={18} />
+              Apagar tudo
+            </button>
+          </div>
         </section>
 
         <section className="cargas-filtros">
@@ -319,7 +413,6 @@ export default function CarregamentosPage({ onVoltar }: Props) {
                     <th>Ações</th>
                   </tr>
                 </thead>
-
                 <tbody>
                   {filtrados.map((registro) => (
                     <tr key={registro.id}>
@@ -335,9 +428,7 @@ export default function CarregamentosPage({ onVoltar }: Props) {
                         </button>
                       </td>
                       <td>{formatarData(registro.criadoEm)}</td>
-                      <td>
-                        <strong>{registro.placa}</strong>
-                      </td>
+                      <td><strong>{registro.placa}</strong></td>
                       <td>{registro.operadorNome}</td>
                       <td>{registro.grupoNome}</td>
                       <td>{registro.areaNome}</td>
@@ -370,86 +461,86 @@ export default function CarregamentosPage({ onVoltar }: Props) {
         </section>
       </section>
 
-      {editando && (
+      {formulario && (
         <div className="cargas-modal-overlay">
           <div className="cargas-modal">
             <button
               type="button"
               className="cargas-modal-fechar"
-              onClick={() => setEditando(null)}
+              onClick={() => {
+                setEditando(null);
+                setCriando(null);
+                setErro("");
+              }}
             >
               <X size={21} />
             </button>
 
-            <p className="cargas-etiqueta">Editar carregamento</p>
-            <h2>{editando.placa}</h2>
+            <p className="cargas-etiqueta">
+              {modoCriacao ? "Novo carregamento" : "Editar carregamento"}
+            </p>
+            <h2>{modoCriacao ? "Adicionar manualmente" : formulario.placa}</h2>
 
             <div className="cargas-form-grid">
               <label>
                 Placa
                 <input
-                  value={editando.placa}
+                  value={formulario.placa}
                   maxLength={7}
-                  onChange={(evento) =>
-                    setEditando({
-                      ...editando,
-                      placa: evento.target.value
-                        .toUpperCase()
-                        .replace(/[^A-Z0-9]/g, ""),
-                    })
-                  }
+                  placeholder="ABC1D23"
+                  onChange={(evento) => {
+                    const valor = limparPlaca(evento.target.value);
+                    if (modoCriacao) setCriando({ ...formulario, placa: valor });
+                    else setEditando({ ...formulario, placa: valor });
+                  }}
                 />
               </label>
 
               <label>
                 Operador
                 <input
-                  value={editando.operadorNome}
-                  onChange={(evento) =>
-                    setEditando({
-                      ...editando,
-                      operadorNome: evento.target.value,
-                    })
-                  }
+                  value={formulario.operadorNome}
+                  onChange={(evento) => {
+                    const valor = evento.target.value;
+                    if (modoCriacao) setCriando({ ...formulario, operadorNome: valor });
+                    else setEditando({ ...formulario, operadorNome: valor });
+                  }}
                 />
               </label>
 
               <label>
                 Grupo
                 <input
-                  value={editando.grupoNome}
-                  onChange={(evento) =>
-                    setEditando({
-                      ...editando,
-                      grupoNome: evento.target.value,
-                    })
-                  }
+                  value={formulario.grupoNome}
+                  onChange={(evento) => {
+                    const valor = evento.target.value;
+                    if (modoCriacao) setCriando({ ...formulario, grupoNome: valor });
+                    else setEditando({ ...formulario, grupoNome: valor });
+                  }}
                 />
               </label>
 
               <label>
                 Área
                 <input
-                  value={editando.areaNome}
-                  onChange={(evento) =>
-                    setEditando({
-                      ...editando,
-                      areaNome: evento.target.value,
-                    })
-                  }
+                  value={formulario.areaNome}
+                  onChange={(evento) => {
+                    const valor = evento.target.value;
+                    if (modoCriacao) setCriando({ ...formulario, areaNome: valor });
+                    else setEditando({ ...formulario, areaNome: valor });
+                  }}
                 />
               </label>
 
               <label>
                 Tipo
                 <select
-                  value={editando.tipo}
-                  onChange={(evento) =>
-                    setEditando({
-                      ...editando,
-                      tipo: evento.target.value as TipoCarregamento,
-                    })
-                  }
+                  value={formulario.tipo}
+                  onChange={(evento) => {
+                    const tipo = evento.target.value as TipoCarregamento;
+                    if (modoCriacao) setCriando({ ...formulario, tipo });
+                    else setEditando({ ...formulario, tipo });
+                  }}
                 >
                   <option value="saida">Saída</option>
                   <option value="faltou-pouco">Faltou pouco</option>
@@ -462,26 +553,24 @@ export default function CarregamentosPage({ onVoltar }: Props) {
                 Data e horário
                 <input
                   type="datetime-local"
-                  value={paraInputData(editando.criadoEm)}
-                  onChange={(evento) =>
-                    setEditando({
-                      ...editando,
-                      criadoEm: evento.target.value,
-                    })
-                  }
+                  value={paraInputData(formulario.criadoEm)}
+                  onChange={(evento) => {
+                    const criadoEm = evento.target.value;
+                    if (modoCriacao) setCriando({ ...formulario, criadoEm });
+                    else setEditando({ ...formulario, criadoEm });
+                  }}
                 />
               </label>
 
               <label className="cargas-form-observacao">
                 Observação
                 <textarea
-                  value={editando.observacao ?? ""}
-                  onChange={(evento) =>
-                    setEditando({
-                      ...editando,
-                      observacao: evento.target.value,
-                    })
-                  }
+                  value={formulario.observacao ?? ""}
+                  onChange={(evento) => {
+                    const observacao = evento.target.value;
+                    if (modoCriacao) setCriando({ ...formulario, observacao });
+                    else setEditando({ ...formulario, observacao });
+                  }}
                 />
               </label>
             </div>
@@ -489,11 +578,17 @@ export default function CarregamentosPage({ onVoltar }: Props) {
             <button
               type="button"
               className="cargas-salvar"
-              onClick={() => void salvarEdicao()}
+              onClick={() =>
+                modoCriacao ? void salvarManual() : void salvarEdicao()
+              }
               disabled={salvando}
             >
               <Check size={20} />
-              {salvando ? "Salvando..." : "Salvar alterações"}
+              {salvando
+                ? "Salvando..."
+                : modoCriacao
+                  ? "Adicionar carregamento"
+                  : "Salvar alterações"}
             </button>
           </div>
         </div>

@@ -1,19 +1,17 @@
 import { supabase, supabaseConfigurado } from "../lib/supabase";
+import {
+  sincronizarFilaCarregamentos,
+} from "./carregamentosService";
+import { sincronizarFilaOcorrencias } from "./ocorrenciasService";
 
 const AREAS_KEY = "crivo_colheitas_areas";
 const GRUPOS_KEY = "crivo_colheitas_grupos";
 const PLACAS_KEY = "crivo_colheitas_placas";
 const OPERADORES_KEY = "crivo_colheitas_operadores";
-const OPERACAO_KEY = "crivo_colheitas_operacao_ativa";
 const HYDRATED_KEY = "crivo_colheitas_supabase_hidratado";
 const INTERVALO_SINCRONIZACAO_MS = 60_000;
 
 type JsonRecord = Record<string, unknown>;
-
-type OperacaoLocal = {
-  registros?: JsonRecord[];
-  [key: string]: unknown;
-};
 
 type StatusSincronizacao =
   | "sincronizando"
@@ -59,44 +57,16 @@ function lerLista(chave: string): JsonRecord[] {
   }
 }
 
-function salvarLista(
-  chave: string,
-  itens: JsonRecord[],
-) {
-  localStorage.setItem(
-    chave,
-    JSON.stringify(itens),
-  );
+function salvarLista(chave: string, itens: JsonRecord[]) {
+  localStorage.setItem(chave, JSON.stringify(itens));
 }
 
-function lerOperacao(): OperacaoLocal | null {
-  const salvo = localStorage.getItem(OPERACAO_KEY);
-
-  if (!salvo) return null;
-
-  try {
-    const valor = JSON.parse(salvo) as unknown;
-
-    return typeof valor === "object" && valor !== null
-      ? (valor as OperacaoLocal)
-      : null;
-  } catch {
-    return null;
-  }
-}
-
-function mesclarPorId(
-  local: JsonRecord[],
-  remoto: JsonRecord[],
-) {
+function mesclarPorId(local: JsonRecord[], remoto: JsonRecord[]) {
   const mapa = new Map<string, JsonRecord>();
 
   remoto.forEach((item) => {
     const id = String(item.id ?? "");
-
-    if (id) {
-      mapa.set(id, item);
-    }
+    if (id) mapa.set(id, item);
   });
 
   local.forEach((item) => {
@@ -161,9 +131,7 @@ function placaParaLocal(item: JsonRecord) {
     placa: item.placa,
     apelido: item.apelido ?? "",
     ativa: item.ativa ?? true,
-    criadoEm:
-      item.criado_em ??
-      new Date().toISOString(),
+    criadoEm: item.criado_em ?? new Date().toISOString(),
     atualizadoEm:
       item.atualizado_em ??
       item.criado_em ??
@@ -189,78 +157,9 @@ function operadorParaLocal(item: JsonRecord) {
     pin: item.pin,
     cargo: item.cargo ?? "operador",
     ativo: item.ativo ?? true,
-    criadoEm:
-      item.criado_em ??
-      new Date().toISOString(),
+    criadoEm: item.criado_em ?? new Date().toISOString(),
     atualizadoEm:
       item.atualizado_em ??
-      item.criado_em ??
-      new Date().toISOString(),
-  };
-}
-
-function carregamentoParaBanco(
-  item: JsonRecord,
-) {
-  return {
-    id: item.id,
-    placa: item.placa,
-    grupo_id: item.grupoId ?? null,
-    grupo_nome: item.grupoNome ?? null,
-    area_id: item.areaId ?? null,
-    area_nome: item.areaNome ?? null,
-    operador_nome: item.operadorNome ?? null,
-    tipo: item.tipo ?? "saida",
-    area_origem_id:
-      item.areaOrigemId ?? null,
-    area_origem_nome:
-      item.areaOrigemNome ?? null,
-    area_destino_id:
-      item.areaDestinoId ?? null,
-    area_destino_nome:
-      item.areaDestinoNome ?? null,
-    quantidade_origem:
-      item.quantidadeOrigem ?? null,
-    quantidade_destino:
-      item.quantidadeDestino ?? null,
-    observacao: item.observacao ?? null,
-    criado_em:
-      item.criadoEm ??
-      new Date().toISOString(),
-  };
-}
-
-function carregamentoParaLocal(
-  item: JsonRecord,
-) {
-  return {
-    id: item.id,
-    placa: item.placa,
-    grupoId:
-      item.grupo_id ?? "sem-grupo",
-    grupoNome:
-      item.grupo_nome ?? "Sem grupo",
-    areaId: item.area_id ?? "",
-    areaNome: item.area_nome ?? "",
-    operadorNome:
-      item.operador_nome ?? "Escritório",
-    tipo: item.tipo ?? "saida",
-    areaOrigemId:
-      item.area_origem_id ?? undefined,
-    areaOrigemNome:
-      item.area_origem_nome ?? undefined,
-    areaDestinoId:
-      item.area_destino_id ?? undefined,
-    areaDestinoNome:
-      item.area_destino_nome ?? undefined,
-    quantidadeOrigem:
-      item.quantidade_origem ?? undefined,
-    quantidadeDestino:
-      item.quantidade_destino ?? undefined,
-    observacao:
-      item.observacao ?? undefined,
-    pendenteSincronizacao: false,
-    criadoEm:
       item.criado_em ??
       new Date().toISOString(),
   };
@@ -269,181 +168,74 @@ function carregamentoParaLocal(
 async function sincronizarTabela(
   tabela: string,
   chaveLocal: string,
-  paraBanco: (
-    item: JsonRecord,
-  ) => JsonRecord,
-  paraLocal: (
-    item: JsonRecord,
-  ) => JsonRecord,
+  paraBanco: (item: JsonRecord) => JsonRecord,
+  paraLocal: (item: JsonRecord) => JsonRecord,
 ) {
   if (!supabase) return;
 
   const locais = lerLista(chaveLocal);
 
-  const {
-    data: remotos,
-    error: erroLeitura,
-  } = await supabase
+  const { data: remotos, error: erroLeitura } = await supabase
     .from(tabela)
     .select("*");
 
-  if (erroLeitura) {
-    throw erroLeitura;
-  }
+  if (erroLeitura) throw erroLeitura;
 
-  const remotosLocais = (
-    remotos ?? []
-  ).map((item) =>
+  const remotosLocais = (remotos ?? []).map((item) =>
     paraLocal(item as JsonRecord),
   );
 
-  const mesclados = mesclarPorId(
-    locais,
-    remotosLocais,
-  );
-
-  salvarLista(
-    chaveLocal,
-    mesclados,
-  );
+  const mesclados = mesclarPorId(locais, remotosLocais);
+  salvarLista(chaveLocal, mesclados);
 
   if (mesclados.length > 0) {
     const { error } = await supabase
       .from(tabela)
-      .upsert(
-        mesclados.map(paraBanco),
-        {
-          onConflict: "id",
-        },
-      );
+      .upsert(mesclados.map(paraBanco), { onConflict: "id" });
 
-    if (error) {
-      throw error;
-    }
-  }
-}
-
-async function sincronizarCarregamentos() {
-  if (!supabase) return;
-
-  const operacao = lerOperacao();
-
-  const locais = Array.isArray(
-    operacao?.registros,
-  )
-    ? operacao.registros
-    : [];
-
-  /*
-   * Somente registros explicitamente marcados como pendentes
-   * podem ser enviados ao Supabase.
-   *
-   * Registros antigos já sincronizados nunca são reenviados.
-   * Isso impede que outro tablet ressuscite carregamentos apagados.
-   */
-  const pendentes = locais.filter(
-    (item) =>
-      item.pendenteSincronizacao === true,
-  );
-
-  if (pendentes.length > 0) {
-    const { error: erroEnvio } = await supabase
-      .from("carregamentos")
-      .upsert(
-        pendentes.map(
-          carregamentoParaBanco,
-        ),
-        {
-          onConflict: "id",
-        },
-      );
-
-    if (erroEnvio) {
-      throw erroEnvio;
-    }
-  }
-
-  /*
-   * Depois do envio dos pendentes, o Supabase passa a ser
-   * a fonte oficial do histórico de carregamentos.
-   */
-  const {
-    data: remotos,
-    error: erroLeitura,
-  } = await supabase
-    .from("carregamentos")
-    .select("*")
-    .order("criado_em", {
-      ascending: true,
-    });
-
-  if (erroLeitura) {
-    throw erroLeitura;
-  }
-
-  const registrosRemotos = (
-    remotos ?? []
-  ).map((item) =>
-    carregamentoParaLocal(
-      item as JsonRecord,
-    ),
-  );
-
-  if (operacao) {
-    localStorage.setItem(
-      OPERACAO_KEY,
-      JSON.stringify({
-        ...operacao,
-        registros: registrosRemotos,
-      }),
-    );
+    if (error) throw error;
   }
 }
 
 export async function sincronizarComSupabase(
   opcoes: OpcoesSincronizacao = {},
 ) {
-  if (
-    !supabaseConfigurado ||
-    !supabase
-  ) {
+  if (!supabaseConfigurado || !supabase) {
     return {
       conectado: false,
-      mensagem:
-        "Supabase ainda não configurado.",
+      mensagem: "Supabase ainda não configurado.",
     };
   }
 
   if (!navigator.onLine) {
     return {
       conectado: false,
-      mensagem:
-        "Sem internet. Dados mantidos no aparelho.",
+      mensagem: "Sem internet. Dados mantidos no aparelho.",
     };
   }
 
-  const silenciosa =
-    opcoes.silenciosa === true;
+  const silenciosa = opcoes.silenciosa === true;
 
   if (!silenciosa) {
     emitirStatusSincronizacao({
       status: "sincronizando",
-      mensagem:
-        "Enviando e recebendo dados...",
+      mensagem: "Enviando e recebendo dados...",
     });
   }
 
-  const antes = [
+  /*
+   * A operação ativa NÃO entra nesta lista.
+   * Área atual, modais e cargas em andamento pertencem somente ao aparelho.
+   */
+  const chavesCompartilhadas = [
     GRUPOS_KEY,
     AREAS_KEY,
     PLACAS_KEY,
     OPERADORES_KEY,
-    OPERACAO_KEY,
-  ]
-    .map(
-      (chave) =>
-        localStorage.getItem(chave) ?? "",
-    )
+  ];
+
+  const antes = chavesCompartilhadas
+    .map((chave) => localStorage.getItem(chave) ?? "")
     .join("|");
 
   try {
@@ -475,63 +267,40 @@ export async function sincronizarComSupabase(
       operadorParaLocal,
     );
 
-    await sincronizarCarregamentos();
+    /*
+     * Envia somente a fila independente de carregamentos.
+     * Nunca substitui a operação ativa do aparelho.
+     */
+    await sincronizarFilaCarregamentos();
+    await sincronizarFilaOcorrencias();
 
-    const dataSincronizacao =
-      new Date().toISOString();
+    const dataSincronizacao = new Date().toISOString();
+    localStorage.setItem(HYDRATED_KEY, dataSincronizacao);
 
-    localStorage.setItem(
-      HYDRATED_KEY,
-      dataSincronizacao,
-    );
-
-    const depois = [
-      GRUPOS_KEY,
-      AREAS_KEY,
-      PLACAS_KEY,
-      OPERADORES_KEY,
-      OPERACAO_KEY,
-    ]
-      .map(
-        (chave) =>
-          localStorage.getItem(chave) ??
-          "",
-      )
+    const depois = chavesCompartilhadas
+      .map((chave) => localStorage.getItem(chave) ?? "")
       .join("|");
 
-    /*
-     * Este evento atualiza as páginas somente quando
-     * os dados locais realmente mudaram.
-     */
     if (antes !== depois) {
       window.dispatchEvent(
-        new Event(
-          "crivo:supabase-sincronizado",
-        ),
+        new Event("crivo:cadastros-sincronizados"),
       );
     }
 
-    /*
-     * Este evento atualiza apenas o indicador,
-     * inclusive quando nenhum dado mudou.
-     */
     emitirStatusSincronizacao({
       status: "sucesso",
-      mensagem:
-        "Todos os dados foram sincronizados.",
+      mensagem: "Todos os dados foram sincronizados.",
       data: dataSincronizacao,
     });
 
     return {
       conectado: true,
-      mensagem:
-        "Dados sincronizados.",
+      mensagem: "Dados sincronizados.",
     };
   } catch (erro) {
     emitirStatusSincronizacao({
       status: "erro",
-      mensagem:
-        "Não foi possível sincronizar.",
+      mensagem: "Não foi possível sincronizar.",
     });
 
     throw erro;
@@ -544,9 +313,7 @@ export function iniciarSincronizacaoAutomatica(
   let executando = false;
   let encerrado = false;
 
-  const executar = async (
-    silenciosa = false,
-  ) => {
+  const executar = async (silenciosa = false) => {
     if (
       encerrado ||
       executando ||
@@ -559,9 +326,7 @@ export function iniciarSincronizacaoAutomatica(
     executando = true;
 
     try {
-      await sincronizarComSupabase({
-        silenciosa,
-      });
+      await sincronizarComSupabase({ silenciosa });
     } catch (erro) {
       onErro?.(erro);
     } finally {
@@ -571,30 +336,18 @@ export function iniciarSincronizacaoAutomatica(
 
   void executar(false);
 
-  const intervalo =
-    window.setInterval(
-      () => {
-        void executar(true);
-      },
-      INTERVALO_SINCRONIZACAO_MS,
-    );
-
-  const aoFicarOnline = () => {
-    void executar(false);
-  };
-
-  window.addEventListener(
-    "online",
-    aoFicarOnline,
+  const intervalo = window.setInterval(
+    () => void executar(true),
+    INTERVALO_SINCRONIZACAO_MS,
   );
+
+  const aoFicarOnline = () => void executar(false);
+
+  window.addEventListener("online", aoFicarOnline);
 
   return () => {
     encerrado = true;
     window.clearInterval(intervalo);
-
-    window.removeEventListener(
-      "online",
-      aoFicarOnline,
-    );
+    window.removeEventListener("online", aoFicarOnline);
   };
 }

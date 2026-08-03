@@ -7,6 +7,12 @@ import {
   type Carregamento,
 } from "../../services/carregamentosService";
 import {
+  criarOcorrenciaBase,
+  salvarOcorrencia,
+  type TipoOcorrencia,
+} from "../../services/ocorrenciasService";
+import {
+  AlertTriangle,
   ArrowLeft,
   CheckCircle2,
   ChevronRight,
@@ -14,6 +20,7 @@ import {
   FolderOpen,
   MapPinned,
   RefreshCcw,
+  RotateCcw,
   Truck,
   UserRound,
   Wheat,
@@ -27,7 +34,13 @@ type Area = { id: string; nome: string; grupoId?: string; ativa?: boolean };
 type Sessao = { tipo: "admin" | "operador"; nome: string };
 type EtapaOperacao = "grupos" | "areas" | "trabalho";
 type ModoIncompleto = "faltou-pouco" | "meia-carga" | "quantidade";
-type ModalTroca = null | "situacao" | "placa" | "quantidade-origem" | "completar-faltou-pouco";
+type ModalTroca =
+  | null
+  | "situacao"
+  | "placa"
+  | "quantidade-origem"
+  | "completar-faltou-pouco"
+  | "ocorrencia";
 
 type QuantidadeCarga = {
   bazuca: number;
@@ -100,6 +113,21 @@ type PlacaCadastrada = {
   apelido?: string;
 };
 
+type OpcaoOcorrencia = {
+  tipo: TipoOcorrencia;
+  titulo: string;
+  descricao: string;
+};
+
+const OPCOES_OCORRENCIA: OpcaoOcorrencia[] = [
+  { tipo: "esqueci-carga", titulo: "Esqueci uma carga", descricao: "O caminhão saiu sem lançamento." },
+  { tipo: "placa-errada", titulo: "Placa errada", descricao: "A placa foi lançada incorretamente." },
+  { tipo: "area-errada", titulo: "Área errada", descricao: "O carregamento foi lançado na área errada." },
+  { tipo: "troca-caminhoes", titulo: "Troquei os caminhões", descricao: "As placas de dois carregamentos foram invertidas." },
+  { tipo: "carga-dividida", titulo: "Carga dividida ficou errada", descricao: "Houve confusão na origem, destino ou quantidade." },
+  { tipo: "outro", titulo: "Outro problema", descricao: "Enviar uma observação ao escritório." },
+];
+
 const OPERACAO_KEY = "crivo_colheitas_operacao_ativa";
 const SESSAO_KEY = "crivo_colheitas_sessao";
 const PLACAS_KEY = "crivo_colheitas_placas";
@@ -110,6 +138,10 @@ function criarId() {
 
 function normalizarTexto(valor: unknown) {
   return typeof valor === "string" ? valor.trim() : "";
+}
+
+function normalizarOperador(nome: string) {
+  return nome.trim().toLocaleLowerCase("pt-BR");
 }
 
 function carregarSessao(): Sessao | null {
@@ -296,6 +328,9 @@ function OperacaoPage({ onVoltar }: OperacaoPageProps) {
   const [trocaEmAndamento, setTrocaEmAndamento] = useState<TrocaEmAndamento | null>(null);
   const [quantidades, setQuantidades] = useState<QuantidadeCarga>(criarQuantidadeVazia);
   const [destinoInicial, setDestinoInicial] = useState<"areas" | "grupos">("areas");
+  const [tipoOcorrencia, setTipoOcorrencia] = useState<TipoOcorrencia | null>(null);
+  const [descricaoOcorrencia, setDescricaoOcorrencia] = useState("");
+  const [enviandoOcorrencia, setEnviandoOcorrencia] = useState(false);
 
   const gruposComAreas = useMemo(() => {
     const normais = dadosAreas.grupos.filter((g) => dadosAreas.areas.some((a) => a.grupoId === g.id));
@@ -316,7 +351,7 @@ function OperacaoPage({ onVoltar }: OperacaoPageProps) {
         new Date(b.criadoEm).getTime() -
         new Date(a.criadoEm).getTime(),
     );
-  }, [operacao?.registros]);
+  }, [nomeOperadorAtual, operacao?.registros]);
 
   const ultimosRegistros = useMemo(
     () => registrosOrdenados.slice(0, 5),
@@ -392,7 +427,13 @@ function OperacaoPage({ onVoltar }: OperacaoPageProps) {
       { placa: string; quantidade: number; ultimoUso: number }
     >();
 
-    operacao?.registros.forEach((registro) => {
+    operacao?.registros
+      .filter(
+        (registro) =>
+          normalizarOperador(registro.operadorNome) ===
+          normalizarOperador(nomeOperadorAtual),
+      )
+      .forEach((registro) => {
       const placa = limparPlaca(registro.placa);
       if (placa.length !== 7) return;
 
@@ -406,7 +447,7 @@ function OperacaoPage({ onVoltar }: OperacaoPageProps) {
           new Date(registro.criadoEm).getTime(),
         ),
       });
-    });
+      });
 
     const apelidos = carregarApelidosPlacas();
 
@@ -713,6 +754,65 @@ function OperacaoPage({ onVoltar }: OperacaoPageProps) {
     );
   }
 
+  function abrirOcorrencia() {
+    setTipoOcorrencia(null);
+    setDescricaoOcorrencia("");
+    setModalTroca("ocorrencia");
+  }
+
+  async function confirmarOcorrencia() {
+    if (!operacao || !tipoOcorrencia) return;
+    const opcao = OPCOES_OCORRENCIA.find((item) => item.tipo === tipoOcorrencia);
+    if (!opcao) return;
+
+    setEnviandoOcorrencia(true);
+    try {
+      await salvarOcorrencia(
+        criarOcorrenciaBase({
+          id: criarId(),
+          operadorNome: nomeOperadorAtual,
+          tipo: tipoOcorrencia,
+          titulo: opcao.titulo,
+          descricao: descricaoOcorrencia.trim() || opcao.descricao,
+          grupoId: operacao.grupoId,
+          grupoNome: operacao.grupoNome,
+          areaId: operacao.areaId,
+          areaNome: operacao.areaNome,
+        }),
+      );
+      setModalTroca(null);
+      setTipoOcorrencia(null);
+      setDescricaoOcorrencia("");
+      setMensagemSucesso("Ocorrência enviada ao escritório.");
+      window.setTimeout(() => setMensagemSucesso(""), 2800);
+    } catch (erro) {
+      console.error("Falha ao salvar ocorrência:", erro);
+      window.alert("A ocorrência ficou salva no aparelho e será enviada quando a internet voltar.");
+      setModalTroca(null);
+    } finally {
+      setEnviandoOcorrencia(false);
+    }
+  }
+
+  function destravarAparelho() {
+    const confirmado = window.confirm(
+      "Isso reinicia somente a operação atual deste aparelho. Carregamentos, fila de sincronização, áreas, placas e operadores não serão apagados. Continuar?",
+    );
+    if (!confirmado) return;
+
+    localStorage.removeItem(OPERACAO_KEY);
+    setOperacao(null);
+    setGrupoSelecionadoId(null);
+    setEtapa("grupos");
+    setPlacaDigitada("");
+    setModalTroca(null);
+    setModoIncompleto(null);
+    setPlacaIncompleta("");
+    setTrocaEmAndamento(null);
+    setQuantidades(criarQuantidadeVazia());
+    setMensagemSucesso("Aparelho destravado. Selecione a área novamente.");
+  }
+
   function QuantidadeEditor({
     titulo,
     botao,
@@ -909,6 +1009,8 @@ function OperacaoPage({ onVoltar }: OperacaoPageProps) {
               <div className="operacao-area-acoes">
                 <button type="button" className="trocar-area-button" onClick={() => abrirTroca("areas")} disabled={Boolean(operacao.cargaPendente)}><MapPinned size={18} />Trocar área</button>
                 <button type="button" className="trocar-grupo-button" onClick={() => abrirTroca("grupos")} disabled={Boolean(operacao.cargaPendente)}><FolderOpen size={18} />Trocar grupo</button>
+                <button type="button" className="reportar-problema-button" onClick={abrirOcorrencia}><AlertTriangle size={18} />Reportar problema</button>
+                <button type="button" className="destravar-aparelho-button" onClick={destravarAparelho} title="Reiniciar somente a operação deste aparelho"><RotateCcw size={18} />Destravar</button>
               </div>
             </section>
 
@@ -1008,6 +1110,42 @@ function OperacaoPage({ onVoltar }: OperacaoPageProps) {
 
             {modalTroca === "quantidade-origem" && <QuantidadeEditor titulo={`Quanto ficou em ${operacao?.areaNome}?`} botao="Salvar e escolher próxima área" onConfirmar={confirmarQuantidadeOrigem} />}
             {modalTroca === "completar-faltou-pouco" && <><p className="operacao-etiqueta">Completar carga</p><h2>{operacao?.cargaPendente?.placa}</h2><p>Quanto foi colocado em <strong>{operacao?.areaNome}</strong>?</p><QuantidadeEditor titulo="Selecione a quantidade" botao="Confirmar carga completa" onConfirmar={registrarComplementoFaltouPouco} /></>}
+
+            {modalTroca === "ocorrencia" && (
+              <>
+                <p className="operacao-etiqueta">Avisar o escritório</p>
+                <h2>O que aconteceu?</h2>
+                <p className="ocorrencia-ajuda">A área, o operador e o horário serão preenchidos automaticamente.</p>
+                <div className="ocorrencia-opcoes-grid">
+                  {OPCOES_OCORRENCIA.map((opcao) => (
+                    <button
+                      type="button"
+                      key={opcao.tipo}
+                      className={tipoOcorrencia === opcao.tipo ? "selecionada" : ""}
+                      onClick={() => setTipoOcorrencia(opcao.tipo)}
+                    >
+                      <strong>{opcao.titulo}</strong>
+                      <span>{opcao.descricao}</span>
+                    </button>
+                  ))}
+                </div>
+                <textarea
+                  className="ocorrencia-descricao"
+                  value={descricaoOcorrencia}
+                  onChange={(evento) => setDescricaoOcorrencia(evento.target.value)}
+                  placeholder="Observação opcional"
+                  maxLength={500}
+                />
+                <button
+                  type="button"
+                  className="modal-confirmar"
+                  onClick={() => void confirmarOcorrencia()}
+                  disabled={!tipoOcorrencia || enviandoOcorrencia}
+                >
+                  {enviandoOcorrencia ? "Enviando..." : "Enviar ocorrência"}
+                </button>
+              </>
+            )}
           </div>
         </div>
       )}

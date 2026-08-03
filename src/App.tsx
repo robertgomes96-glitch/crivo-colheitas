@@ -9,6 +9,7 @@ import OperacaoPage from "./pages/operacao/OperacaoPage";
 import CarregamentosPage from "./pages/carregamentos/CarregamentosPage";
 import StatusSincronizacao from "./components/StatusSincronizacao/StatusSincronizacao";
 import { iniciarSincronizacaoAutomatica } from "./services/supabaseSync";
+import { obterDeviceId } from "./services/deviceService";
 
 type CargoOperador =
   | "operador"
@@ -39,14 +40,20 @@ function carregarSessao(): Sessao | null {
 function App() {
   const [sessao, setSessao] = useState<Sessao | null>(carregarSessao);
   const [telaAdmin, setTelaAdmin] = useState<AdminTela>("dashboard");
-  const [versaoDados, setVersaoDados] = useState(0);
+  const [versaoCadastros, setVersaoCadastros] = useState(0);
 
   useEffect(() => {
-    const atualizarTelas = () => setVersaoDados((atual) => atual + 1);
+    /*
+     * Garante que cada navegador/tablet tenha uma identidade própria.
+     */
+    obterDeviceId();
+
+    const atualizarCadastros = () =>
+      setVersaoCadastros((atual) => atual + 1);
 
     window.addEventListener(
-      "crivo:supabase-sincronizado",
-      atualizarTelas,
+      "crivo:cadastros-sincronizados",
+      atualizarCadastros,
     );
 
     const parar = iniciarSincronizacaoAutomatica((erro) => {
@@ -60,8 +67,8 @@ function App() {
       parar();
 
       window.removeEventListener(
-        "crivo:supabase-sincronizado",
-        atualizarTelas,
+        "crivo:cadastros-sincronizados",
+        atualizarCadastros,
       );
     };
   }, []);
@@ -102,7 +109,7 @@ function App() {
   if (!sessao) {
     return (
       <LoginPage
-        key={`login-${versaoDados}`}
+        key={`login-${versaoCadastros}`}
         onLoginAdmin={entrarComoAdmin}
         onLoginOperador={entrarComoOperador}
       />
@@ -113,60 +120,48 @@ function App() {
 
   if (sessao.tipo === "admin") {
     if (telaAdmin === "operacao") {
-      paginaAtual = (
-        <OperacaoPage
-          key={`operacao-admin-${versaoDados}`}
-          onVoltar={voltarDashboard}
-        />
-      );
+      /*
+       * Sem key variável: uma sincronização não desmonta a operação.
+       */
+      paginaAtual = <OperacaoPage onVoltar={voltarDashboard} />;
     } else if (telaAdmin === "areas") {
       paginaAtual = (
         <AreasPage
-          key={`areas-${versaoDados}`}
+          key={`areas-${versaoCadastros}`}
           onVoltar={voltarDashboard}
         />
       );
     } else if (telaAdmin === "placas") {
       paginaAtual = (
         <PlacasPage
-          key={`placas-${versaoDados}`}
+          key={`placas-${versaoCadastros}`}
           onVoltar={voltarDashboard}
         />
       );
     } else if (telaAdmin === "operadores") {
       paginaAtual = (
         <OperadoresPage
-          key={`operadores-${versaoDados}`}
+          key={`operadores-${versaoCadastros}`}
           onVoltar={voltarDashboard}
         />
       );
     } else if (telaAdmin === "relatorios") {
-      paginaAtual = (
-        <RelatoriosPage
-          key={`relatorios-${versaoDados}`}
-          onVoltar={voltarDashboard}
-        />
-      );
+      paginaAtual = <RelatoriosPage onVoltar={voltarDashboard} />;
     } else if (telaAdmin === "carregamentos") {
-      paginaAtual = (
-        <CarregamentosPage onVoltar={voltarDashboard} />
-      );
+      paginaAtual = <CarregamentosPage onVoltar={voltarDashboard} />;
     } else {
       paginaAtual = (
         <AdminPage
-          key={`admin-${versaoDados}`}
           onSair={sair}
           onAbrirTela={setTelaAdmin}
         />
       );
     }
   } else {
-    paginaAtual = (
-      <OperacaoPage
-        key={`operacao-${versaoDados}`}
-        onVoltar={sair}
-      />
-    );
+    /*
+     * A tela do operador nunca é remontada por uma sincronização.
+     */
+    paginaAtual = <OperacaoPage onVoltar={sair} />;
   }
 
   return (

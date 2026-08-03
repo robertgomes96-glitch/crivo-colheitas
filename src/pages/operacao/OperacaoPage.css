@@ -885,3 +885,85 @@
     grid-template-columns: 1fr;
   }
 }
+
+/* Etapa 2: ocorrências e recuperação segura */
+.reportar-problema-button,
+.destravar-aparelho-button {
+  min-height: 46px;
+  padding: 0 14px;
+  border-radius: 12px;
+  color: white;
+  font: inherit;
+  font-weight: 800;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  white-space: nowrap;
+}
+.reportar-problema-button {
+  border: 1px solid rgba(255, 220, 120, 0.45);
+  background: rgba(245, 158, 11, 0.22);
+}
+.destravar-aparelho-button {
+  border: 1px solid rgba(255, 255, 255, 0.22);
+  background: rgba(0, 0, 0, 0.16);
+  font-size: 13px;
+}
+.reportar-problema-button:hover,
+.destravar-aparelho-button:hover {
+  background: rgba(255, 255, 255, 0.23);
+}
+.ocorrencia-ajuda {
+  margin: 8px 0 18px;
+  color: #64748b;
+  line-height: 1.5;
+}
+.ocorrencia-opcoes-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 11px;
+}
+.ocorrencia-opcoes-grid button {
+  min-height: 105px;
+  padding: 16px;
+  border: 1px solid #d7e0d5;
+  border-radius: 15px;
+  background: #fff;
+  color: #173f27;
+  text-align: left;
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+}
+.ocorrencia-opcoes-grid button:hover,
+.ocorrencia-opcoes-grid button.selecionada {
+  border-color: #d97706;
+  background: #fff7ed;
+  box-shadow: 0 0 0 3px rgba(217, 119, 6, 0.08);
+}
+.ocorrencia-opcoes-grid strong { font-size: 16px; }
+.ocorrencia-opcoes-grid span {
+  color: #6b7280;
+  font-size: 13px;
+  line-height: 1.35;
+}
+.ocorrencia-descricao {
+  width: 100%;
+  min-height: 95px;
+  margin-top: 15px;
+  padding: 13px;
+  box-sizing: border-box;
+  border: 1px solid #cbd5e1;
+  border-radius: 13px;
+  font: inherit;
+  resize: vertical;
+}
+@media (max-width: 760px) {
+  .reportar-problema-button,
+  .destravar-aparelho-button { width: 100%; }
+  .ocorrencia-opcoes-grid { grid-template-columns: 1fr; }
+}

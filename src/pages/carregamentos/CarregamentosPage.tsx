@@ -26,6 +26,17 @@ type Props = {
   onVoltar: () => void;
 };
 
+type GrupoCadastro = { id: string; nome: string };
+type AreaCadastro = { id: string; nome: string; grupoId?: string; ativa?: boolean };
+
+function lerCadastros() {
+  try {
+    const grupos = JSON.parse(localStorage.getItem("crivo_colheitas_grupos") || "[]") as GrupoCadastro[];
+    const areas = JSON.parse(localStorage.getItem("crivo_colheitas_areas") || "[]") as AreaCadastro[];
+    return { grupos, areas: areas.filter((a) => a.ativa !== false) };
+  } catch { return { grupos: [] as GrupoCadastro[], areas: [] as AreaCadastro[] }; }
+}
+
 const AGORA_LOCAL = () => {
   const data = new Date();
   const deslocamento = data.getTimezoneOffset() * 60000;
@@ -36,9 +47,9 @@ function novoCarregamentoManual(): Carregamento {
   return {
     id: uuidv4(),
     placa: "",
-    grupoId: "manual",
-    grupoNome: "Sem grupo",
-    areaId: "manual",
+    grupoId: "",
+    grupoNome: "",
+    areaId: "",
     areaNome: "",
     operadorNome: "Escritório",
     tipo: "saida",
@@ -93,6 +104,7 @@ export default function CarregamentosPage({ onVoltar }: Props) {
   const [salvando, setSalvando] = useState(false);
   const [erro, setErro] = useState("");
   const [mensagem, setMensagem] = useState("");
+  const [cadastros, setCadastros] = useState(lerCadastros);
 
   const carregar = useCallback(async () => {
     setCarregando(true);
@@ -110,6 +122,7 @@ export default function CarregamentosPage({ onVoltar }: Props) {
 
   useEffect(() => {
     void carregar();
+    setCadastros(lerCadastros());
   }, [carregar]);
 
   const filtrados = useMemo(() => {
@@ -184,8 +197,12 @@ export default function CarregamentosPage({ onVoltar }: Props) {
       return false;
     }
 
-    if (!carregamento.areaNome.trim()) {
-      setErro("Informe a área do carregamento.");
+    const areaCadastrada = cadastros.areas.find(
+      (area) => area.id === carregamento.areaId,
+    );
+
+    if (!areaCadastrada) {
+      setErro("Selecione uma área cadastrada. Não é permitido digitar a área manualmente.");
       return false;
     }
 
@@ -244,8 +261,10 @@ export default function CarregamentosPage({ onVoltar }: Props) {
     const novo: Carregamento = {
       ...criando,
       placa: limparPlaca(criando.placa),
-      grupoNome: criando.grupoNome.trim() || "Sem grupo",
-      areaNome: criando.areaNome.trim(),
+      grupoId: criando.grupoId,
+      grupoNome: criando.grupoNome,
+      areaId: criando.areaId,
+      areaNome: criando.areaNome,
       operadorNome: criando.operadorNome.trim(),
       criadoEm: new Date(criando.criadoEm).toISOString(),
       observacao:
@@ -335,7 +354,10 @@ export default function CarregamentosPage({ onVoltar }: Props) {
             <button
               type="button"
               className="cargas-adicionar"
-              onClick={() => setCriando(novoCarregamentoManual())}
+              onClick={() => {
+                setCadastros(lerCadastros());
+                setCriando(novoCarregamentoManual());
+              }}
               disabled={salvando}
             >
               <Plus size={18} />
@@ -438,7 +460,33 @@ export default function CarregamentosPage({ onVoltar }: Props) {
                           <button
                             type="button"
                             title="Editar"
-                            onClick={() => setEditando({ ...registro })}
+                            onClick={() => {
+                              const atuais = lerCadastros();
+                              setCadastros(atuais);
+
+                              const porId = atuais.areas.find((a) => a.id === registro.areaId);
+                              const normalizar = (v: string) =>
+                                v.normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim().toLocaleLowerCase("pt-BR");
+                              const porNome = atuais.areas.filter((a) => {
+                                if (normalizar(a.nome) !== normalizar(registro.areaNome)) return false;
+                                const g = atuais.grupos.find((grupo) => grupo.id === a.grupoId);
+                                return !registro.grupoNome || !g || normalizar(g.nome) === normalizar(registro.grupoNome);
+                              });
+                              const areaCerta = porId ?? (porNome.length === 1 ? porNome[0] : undefined);
+
+                              if (areaCerta) {
+                                const grupoCerto = atuais.grupos.find((g) => g.id === areaCerta.grupoId);
+                                setEditando({
+                                  ...registro,
+                                  areaId: areaCerta.id,
+                                  areaNome: areaCerta.nome,
+                                  grupoId: grupoCerto?.id || areaCerta.grupoId || "sem-grupo",
+                                  grupoNome: grupoCerto?.nome || "Sem grupo",
+                                });
+                              } else {
+                                setEditando({ ...registro });
+                              }
+                            }}
                           >
                             <Edit3 size={18} />
                           </button>
@@ -509,27 +557,45 @@ export default function CarregamentosPage({ onVoltar }: Props) {
               </label>
 
               <label>
-                Grupo
-                <input
-                  value={formulario.grupoNome}
+                Área cadastrada
+                <select
+                  value={cadastros.areas.some((a) => a.id === formulario.areaId) ? formulario.areaId : ""}
                   onChange={(evento) => {
-                    const valor = evento.target.value;
-                    if (modoCriacao) setCriando({ ...formulario, grupoNome: valor });
-                    else setEditando({ ...formulario, grupoNome: valor });
+                    const areaSelecionada = cadastros.areas.find((a) => a.id === evento.target.value);
+                    if (!areaSelecionada) return;
+                    const grupoSelecionado = cadastros.grupos.find((g) => g.id === areaSelecionada.grupoId);
+                    const atualizado = {
+                      ...formulario,
+                      areaId: areaSelecionada.id,
+                      areaNome: areaSelecionada.nome,
+                      grupoId: grupoSelecionado?.id || areaSelecionada.grupoId || "sem-grupo",
+                      grupoNome: grupoSelecionado?.nome || "Sem grupo",
+                    };
+                    if (modoCriacao) setCriando(atualizado);
+                    else setEditando(atualizado);
                   }}
-                />
+                >
+                  <option value="">Selecione a área</option>
+                  {cadastros.grupos.map((grupo) => (
+                    <optgroup key={grupo.id} label={grupo.nome}>
+                      {cadastros.areas.filter((a) => a.grupoId === grupo.id).map((a) => (
+                        <option key={a.id} value={a.id}>{a.nome}</option>
+                      ))}
+                    </optgroup>
+                  ))}
+                  {cadastros.areas.some((a) => !a.grupoId) && (
+                    <optgroup label="Sem grupo">
+                      {cadastros.areas.filter((a) => !a.grupoId).map((a) => (
+                        <option key={a.id} value={a.id}>{a.nome}</option>
+                      ))}
+                    </optgroup>
+                  )}
+                </select>
               </label>
 
               <label>
-                Área
-                <input
-                  value={formulario.areaNome}
-                  onChange={(evento) => {
-                    const valor = evento.target.value;
-                    if (modoCriacao) setCriando({ ...formulario, areaNome: valor });
-                    else setEditando({ ...formulario, areaNome: valor });
-                  }}
-                />
+                Grupo
+                <input value={formulario.grupoNome} readOnly />
               </label>
 
               <label>
